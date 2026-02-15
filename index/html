@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>アボカドロくんの虚無ブロック崩し</title>
+<style>
+  body {
+    margin: 0;
+    background: #f5f3e7;
+    font-family: "Hiragino Maru Gothic ProN", "丸ゴシック", sans-serif;
+    text-align: center;
+    color: #333;
+  }
+  canvas {
+    background: #fffdf5;
+    display: block;
+    margin: 0 auto;
+  }
+  .overlay {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    background: rgba(255,255,255,0.9);
+  }
+  .overlay h1 {
+    margin: 0.5em;
+    font-size: 24px;
+  }
+  .overlay p {
+    margin: 0.5em;
+    font-size: 14px;
+  }
+  .btn {
+    margin-top: 12px;
+    padding: 10px 16px;
+    background: #568203;
+    color: #fff;
+    border-radius: 8px;
+    text-decoration: none;
+    font-weight: bold;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="game" width="360" height="520"></canvas>
+
+<div class="overlay" id="overlay">
+  <h1 id="overlayTitle"></h1>
+  <p id="overlayText"></p>
+  <a id="overlayLink" class="btn" target="_blank">リンク</a>
+</div>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const W = canvas.width;
+const H = canvas.height;
+
+// ===== ゲーム状態 =====
+let running = true;
+let lives = 2;
+
+// ===== パドル（アボカドロくん） =====
+const paddle = {
+  w: 80,
+  h: 12,
+  x: W / 2 - 40,
+  y: H - 40,
+  color: "#568203"
+};
+
+// ===== ボール（種） =====
+const ball = {
+  r: 6,
+  x: W / 2,
+  y: H / 2,
+  vx: 2,
+  vy: -2,
+  color: "#6b4f2a",
+  grace: 0 // ぬるっと判定用
+};
+
+// ===== ブロック =====
+const labels = ["忖度", "世間体", "マナー", "同調圧力"];
+const blocks = [];
+const rows = 4;
+const cols = 5;
+const bw = 64;
+const bh = 26;
+const offsetX = 20;
+const offsetY = 60;
+
+for (let r = 0; r < rows; r++) {
+  for (let c = 0; c < cols; c++) {
+    blocks.push({
+      x: offsetX + c * (bw + 6),
+      y: offsetY + r * (bh + 6),
+      w: bw,
+      h: bh,
+      text: labels[Math.floor(Math.random() * labels.length)],
+      alive: true
+    });
+  }
+}
+
+// ===== 入力 =====
+let targetX = paddle.x;
+
+canvas.addEventListener("mousemove", e => {
+  const rect = canvas.getBoundingClientRect();
+  targetX = e.clientX - rect.left - paddle.w / 2;
+});
+
+canvas.addEventListener("touchmove", e => {
+  const rect = canvas.getBoundingClientRect();
+  targetX = e.touches[0].clientX - rect.left - paddle.w / 2;
+  e.preventDefault();
+}, { passive: false });
+
+// ===== 描画 =====
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  // パドル
+  ctx.fillStyle = paddle.color;
+  ctx.fillRect(paddle.x, paddle.y, paddle.w, paddle.h);
+
+  // ボール
+  ctx.fillStyle = ball.color;
+  ctx.beginPath();
+  ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+  ctx.fill();
+
+  // ブロック
+  blocks.forEach(b => {
+    if (!b.alive) return;
+    ctx.fillStyle = "#d8e6b8";
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.fillStyle = "#333";
+    ctx.font = "12px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(b.text, b.x + b.w / 2, b.y + b.h / 2);
+  });
+}
+
+// ===== 更新 =====
+function update() {
+  // パドル移動（ぬるっと）
+  paddle.x += (targetX - paddle.x) * 0.2;
+  paddle.x = Math.max(0, Math.min(W - paddle.w, paddle.x));
+
+  // ボール移動
+  ball.x += ball.vx;
+  ball.y += ball.vy;
+
+  // 壁反射
+  if (ball.x < ball.r || ball.x > W - ball.r) ball.vx *= -1;
+  if (ball.y < ball.r) ball.vy *= -1;
+
+  // パドル衝突
+  if (
+    ball.y + ball.r > paddle.y &&
+    ball.x > paddle.x &&
+    ball.x < paddle.x + paddle.w
+  ) {
+    ball.vy = -Math.abs(ball.vy);
+    ball.grace = 10;
+  }
+
+  // ブロック衝突
+  blocks.forEach(b => {
+    if (!b.alive) return;
+    if (
+      ball.x > b.x &&
+      ball.x < b.x + b.w &&
+      ball.y - ball.r < b.y + b.h &&
+      ball.y + ball.r > b.y
+    ) {
+      b.alive = false;
+      ball.vy *= -1;
+    }
+  });
+
+  // 落下判定（ぬるっと）
+  if (ball.y > H) {
+    if (ball.grace > 0) {
+      ball.grace--;
+      ball.y = H - 10;
+      ball.vy = -2;
+    } else {
+      lives--;
+      resetBall();
+      if (lives < 0) endGame(false);
+    }
+  }
+
+  // クリア判定
+  if (blocks.every(b => !b.alive)) {
+    endGame(true);
+  }
+}
+
+function resetBall() {
+  ball.x = W / 2;
+  ball.y = H / 2;
+  ball.vy = -2;
+}
+
+// ===== 終了処理 =====
+function endGame(clear) {
+  running = false;
+  const overlay = document.getElementById("overlay");
+  const title = document.getElementById("overlayTitle");
+  const text = document.getElementById("overlayText");
+  const link = document.getElementById("overlayLink");
+
+  overlay.style.display = "flex";
+
+  if (clear) {
+    title.textContent = "おめでとう。でも、特に何も起きません（定数なので）";
+    text.textContent = "暇つぶしのお供にスタンプでもどう？";
+    link.textContent = "科学のアボガドロくん";
+    link.href = "https://line.me/S/sticker/32825101/?lang=ja&utm_source=gnsh_stickerDetail";
+    link.style.display = "inline-block";
+  } else {
+    title.textContent = "まあ、人生そんなもんです";
+    text.textContent = "再挑戦しますか？それとも寝ますか？";
+    link.style.display = "none";
+  }
+}
+
+// ===== ループ =====
+function loop() {
+  if (running) {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+  }
+}
+
+loop();
+</script>
+</body>
+</html>
